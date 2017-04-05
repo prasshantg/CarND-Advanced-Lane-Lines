@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from moviepy.editor import VideoFileClip
 
 sobel_kernel = 3
-mag_threshold = (40, 130)
+mag_threshold = (10, 150)
 color_threshold = (100, 200)
 color_channel = 2
 
@@ -82,7 +82,7 @@ def combined_thresholds(img):
 	c_binary = apply_color_threshold(img, color_threshold, color_channel)
 
 	#color_binary = np.dstack((np.zeros_like(s_binary), s_binary, c_binary)) * 255
-	color_binary = np.dstack((np.zeros_like(s_binary), np.zeros_like(s_binary), s_binary)) * 255
+	color_binary = np.dstack((np.zeros_like(s_binary), c_binary, s_binary)) * 255
 
 	combined_binary = np.zeros_like(s_binary)
 	combined_binary[(s_binary == 1) | (c_binary == 1)] = 1
@@ -90,10 +90,8 @@ def combined_thresholds(img):
 	return color_binary, combined_binary
 
 def draw_lines(img):
-	cv2.line(img, (770,480),(1180,720), [255,0,0],4)
-	cv2.line(img, (580,480),(230,720), [255,0,0],4)
-
-	return img
+	cv2.line(img, (1180,0),(1180,720), [255,0,0],4)
+	cv2.line(img, (230,0),(230,720), [255,0,0],4)
 
 def warp_image(img, src_corners, dst_corners):
 
@@ -102,9 +100,33 @@ def warp_image(img, src_corners, dst_corners):
 
 	return binary_warped
 
+def region_of_interest(img, vertices):
+    """
+    Applies an image mask.
+    
+    Only keeps the region of the image defined by the polygon
+    formed from `vertices`. The rest of the image is set to black.
+    """
+    #defining a blank mask to start with
+    mask = np.zeros_like(img)   
+    
+    #defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+    if len(img.shape) > 2:
+        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+        ignore_mask_color = (255,) * channel_count
+    else:
+        ignore_mask_color = 255
+        
+    #filling pixels inside the polygon defined by "vertices" with the fill color    
+    cv2.fillPoly(mask, vertices, ignore_mask_color)
+
+    #returning the image only where mask pixels are nonzero
+    masked_image = cv2.bitwise_and(img, mask)
+    return masked_image
+
 def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 	histogram = np.sum(img[np.int(img.shape[0]/2):,:], axis=0)
-	out_img = np.dstack((img, img, img))*255
+	#out_img = np.dstack((img, img, img))*255
 	midpoint = np.int(histogram.shape[0]/2)
 	leftx_base = np.argmax(histogram[:midpoint])
 	rightx_base = np.argmax(histogram[midpoint:]) + midpoint
@@ -132,8 +154,8 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 		win_xright_high = rightx_current + margin
 
 		# Draw the windows on the visualization image
-		cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-		cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
+		#cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
+		#cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
 
 		# Identify the nonzero pixels in x and y within the window
 		good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
@@ -167,10 +189,10 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 	right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
 	# Create an image to draw on and an image to show the selection window
-	#out_img = np.dstack((img, img, img))*255
+	out_img = np.dstack((img, img, img))*255
 	# Color in left and right line pixels
-	#out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-	#out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+	out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
+	out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
 
 	return out_img, left_fitx, right_fitx, left_lane_inds, right_lane_inds, ploty
 
@@ -188,8 +210,9 @@ def draw_lanes(img, left_fitx, right_fitx, ploty, margin):
 	cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
 	cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
 	result = cv2.addWeighted(img, 1, window_img, 0.3, 0)
+	out_img = np.dstack((np.zeros_like(result), np.zeros_like(result), result))
 
-	return result
+	return out_img
 
 def draw_lane_mask(orig_img, img, left_fitx, right_fitx, ploty, src_corners, dst_corners):
 	# Create an image to draw the lines on
@@ -221,25 +244,30 @@ def process_image(img):
 	#dst_img = draw_lines(undistort_img)
 
 	#Apply a perspective transform to rectify binary image ("birds-eye view").
-	src_corners = np.float32([[770, 480],[1180, 720],[580,480],[230,720]])
+	src_corners = np.float32([[770, 495],[1180, 720],[580,495],[230,720]])
 	dst_corners = np.float32([[1180,0],[1180,720],[230,0],[230,720]])
 	binary_warped = warp_image(binary_combined, src_corners, dst_corners)
+	color_warped = warp_image(undistort_img, src_corners, dst_corners)
+	#draw_lines(color_warped)
+	vertices = np.array([[(230,720),(230,0),(1180,0),(1180,720)]], dtype=np.int32)
+	binary_warped = region_of_interest(binary_warped, vertices)
 
 	#Used only for drawing
-	out_img = np.dstack((np.zeros_like(binary_warped), binary_warped, np.zeros_like(binary_warped)))*255
+	#out_img = np.dstack((np.zeros_like(binary_warped), binary_warped, np.zeros_like(binary_warped)))*255
 
 	#Detect lane pixels and fit to find the lane boundary.
 	# Set the width of the windows +/- margin
-	margin = 100
+	margin = 80
 	# Set minimum number of pixels found to recenter window
-	minpix = 50
-	out_img1, left_fitx, right_fitx, left_lane_inds, right_lane_inds, ploty = detect_lanes(binary_warped, margin, minpix)
+	minpix = 300
+	out_img, left_fitx, right_fitx, left_lane_inds, right_lane_inds, ploty = detect_lanes(binary_warped, margin, minpix)
 
 	#out_img = draw_lanes(binary_warped, left_fitx, right_fitx, ploty, margin)
 
-	#out_img = draw_lane_mask(undistort_img, binary_warped, left_fitx, right_fitx, ploty, src_corners, dst_corners)
+	out_img = draw_lane_mask(undistort_img, binary_warped, left_fitx, right_fitx, ploty, src_corners, dst_corners)
 
-	return out_img
+	#return out_img
+	return color_warped
 
 #Compute the camera calibration matrix and distortion coefficients given a set of chessboard images.
 mtx_l, dist_l = calibrate_camera()
@@ -256,7 +284,7 @@ for idx, fname in enumerate(test_images):
 #Output visual display of the lane boundaries and numerical estimation of lane curvature and vehicle position.
 #	cv2.imwrite('output_images/final_output{0}.jpg'.format(idx+1), out_img)
 
-challenge_output = 'challenge_output.mp4'
-clip1 = VideoFileClip("challenge_video.mp4")
+challenge_output = 'project_output.mp4'
+clip1 = VideoFileClip("project_video.mp4")
 challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
 challenge_clip.write_videofile(challenge_output, audio=False)
