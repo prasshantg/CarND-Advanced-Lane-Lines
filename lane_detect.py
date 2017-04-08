@@ -358,8 +358,8 @@ def calculate_radius(img):
 	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
 	y_eval = np.max(ploty)
 
-	left_fit = left_line.current_fit
-	right_fit = right_line.current_fit
+	left_fit = left_line.best_fit
+	right_fit = right_line.best_fit
 
 	left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
 	right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
@@ -466,7 +466,7 @@ def process_image(img, save_img=False, idx=0):
 
 	result = draw_lane_mask(undistort_img, binary_warped, src_corners, dst_corners)
 
-	cv2.putText(result, "Curvature {0:.2f}m Offset: {0:.2f}m".format((leftrad + rightrad)/2, distance), (100,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 2)
+	cv2.putText(result, "Curvature {0:.2f}m Offset: {1:.2f}m".format((leftrad + rightrad)/2, distance), (100,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 2)
 
 	out_img4 = cv2.resize(result, (0,0), fx=0.5, fy=0.5)
 
