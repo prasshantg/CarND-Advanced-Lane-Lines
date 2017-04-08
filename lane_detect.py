@@ -215,22 +215,35 @@ def detect_lanes(img):
 
 	# Step through the windows one by one
 	for win in range(nwindows - 2):
+		lcurrent = leftx_current - margin
+		rcurrent = rightx_current - margin
 		window = win + 2
-		# Identify window boundaries in x and y (and right and left)
-		win_y_low = img.shape[0] - (window+1)*window_height
-		win_y_high = img.shape[0] - window*window_height
-		win_xleft_low = leftx_current - margin
-		win_xleft_high = leftx_current + margin
-		win_xright_low = rightx_current - margin
-		win_xright_high = rightx_current + margin
+		good_left_inds = ((nonzerox > 0) & (nonzeroy > 0)).nonzero()[0]
+		good_right_inds = ((nonzerox > 0) & (nonzeroy > 0)).nonzero()[0]
+		for i in range(2):
+			# Identify window boundaries in x and y (and right and left)
+			win_y_low = img.shape[0] - (window+1)*window_height
+			win_y_high = img.shape[0] - window*window_height
+			win_xleft_low = (lcurrent + i * margin) - margin
+			win_xleft_high = (lcurrent + i * margin) + margin
+			win_xright_low = (rcurrent + i * margin) - margin
+			win_xright_high = (rcurrent + i * margin) + margin
 
-		# Draw the windows on the visualization image
-		cv2.rectangle(out_img1,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-		cv2.rectangle(out_img1,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
+			# Draw the windows on the visualization image
+			cv2.rectangle(out_img1,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
+			cv2.rectangle(out_img1,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
 
-		# Identify the nonzero pixels in x and y within the window
-		good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
-		good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
+			# Identify the nonzero pixels in x and y within the window
+			linds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
+			rinds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
+			if i == 0:
+				good_left_inds = linds
+				good_right_inds = rinds
+
+			if len(linds) > len(good_left_inds):
+				good_left_inds = linds
+			if len(rinds) > len(good_right_inds):
+				good_right_inds = rinds
 
 		# Append these indices to the lists
 		left_lane_inds.append(good_left_inds)
