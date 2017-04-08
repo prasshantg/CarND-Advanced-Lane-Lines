@@ -97,7 +97,6 @@ def calibrate_camera():
 
 def apply_color_mask(img):
 	img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-	print(img_gray.shape)
 	# Convert BGR to HSV
 	img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 	# Extract yellow color lanes
@@ -107,8 +106,6 @@ def apply_color_mask(img):
 	# Convert image to binary to highlight white lanes and avoid gray patches on road
 	th, out_img = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV);
 	out_img = cv2.bitwise_not(out_img)
-	print(out_img.shape)
-	print(img_threshold.shape)
 	# Merge yellow extracted and binary image
 	out_img = cv2.bitwise_or(out_img, img_threshold)
 	return out_img
@@ -116,7 +113,6 @@ def apply_color_mask(img):
 def apply_mag_threshold(img, kernel=3, m_threshold=(0,255), axis='x'):
 	#gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 	gray = img
-	print(img.shape)
 
 	if axis == 'x':
 		sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=kernel) #Take derivative in x
@@ -142,13 +138,13 @@ def apply_color_threshold(img, c_threshold=(0,255), c_channel=2):
 	return cbinary
 
 def combined_thresholds(img, masked_img):
-	s_binary = apply_mag_threshold(masked_img, 3, (20,100), 'y')
-	c_binary = apply_color_threshold(img, (170,255), 2)
+	s_binary = apply_mag_threshold(masked_img, 3, (10,150), 'y')
+	c_binary = apply_color_threshold(img, (100,200), 2)
 
 	color_binary = np.dstack((s_binary, np.zeros_like(s_binary), c_binary)) * 255
 
 	combined_binary = np.zeros_like(s_binary)
-	combined_binary[(s_binary == 1) | (c_binary == 1)] = 1
+	combined_binary[(s_binary == 1) | (s_binary == 1)] = 1
 
 	return color_binary, combined_binary
 
@@ -191,7 +187,8 @@ def detect_next_lane(img):
 	return out_img
 
 def detect_lanes(img):
-	margin = 100
+	h_margin = 80
+	margin = 80
 	minpix = 50
 	nwindows = 18
 
@@ -215,8 +212,8 @@ def detect_lanes(img):
 
 	# Step through the windows one by one
 	for win in range(nwindows - 2):
-		lcurrent = leftx_current - margin
-		rcurrent = rightx_current - margin
+		lcurrent = leftx_current - h_margin
+		rcurrent = rightx_current - h_margin
 		window = win + 2
 		good_left_inds = ((nonzerox > 0) & (nonzeroy > 0)).nonzero()[0]
 		good_right_inds = ((nonzerox > 0) & (nonzeroy > 0)).nonzero()[0]
@@ -224,10 +221,10 @@ def detect_lanes(img):
 			# Identify window boundaries in x and y (and right and left)
 			win_y_low = img.shape[0] - (window+1)*window_height
 			win_y_high = img.shape[0] - window*window_height
-			win_xleft_low = (lcurrent + i * margin) - margin
-			win_xleft_high = (lcurrent + i * margin) + margin
-			win_xright_low = (rcurrent + i * margin) - margin
-			win_xright_high = (rcurrent + i * margin) + margin
+			win_xleft_low = (lcurrent + i * h_margin) - margin
+			win_xleft_high = (lcurrent + i * h_margin) + margin
+			win_xright_low = (rcurrent + i * h_margin) - margin
+			win_xright_high = (rcurrent + i * h_margin) + margin
 
 			# Draw the windows on the visualization image
 			cv2.rectangle(out_img1,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
@@ -348,8 +345,8 @@ def process_image(img, save_img=False, img_index=0):
 		cv2.imwrite('output_images/binary_combined_output{0}.jpg'.format(idx+1), binary_combined)
 
 	#Apply a perspective transform to rectify binary image ("birds-eye view").
-	src_corners = np.float32([[800, 470],[1210, 720],[550,470],[200,720]])
-	dst_corners = np.float32([[1260,0],[1260,720],[20,0],[20,720]])
+	src_corners = np.float32([[800, 470],[1210, 720],[550,470],[180,720]])
+	dst_corners = np.float32([[1260,0],[1260,720],[40,0],[40,720]])
 
 	orig_warped = warp_image(undistort_img, src_corners, dst_corners)
 	out_img1 = cv2.resize(orig_warped, (0,0), fx=0.5, fy=0.5)
@@ -418,7 +415,7 @@ for idx, fname in enumerate(test_images):
 	right_line.current_fit = [np.array([False])]
 
 
-#challenge_output = 'project_output.mp4'
-#clip1 = VideoFileClip("project_video.mp4")
-#challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-#challenge_clip.write_videofile(challenge_output, audio=False)
+challenge_output = 'project_output.mp4'
+clip1 = VideoFileClip("project_video.mp4")
+challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+challenge_clip.write_videofile(challenge_output, audio=False)
