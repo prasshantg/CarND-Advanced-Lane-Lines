@@ -4,10 +4,54 @@ import glob
 import matplotlib.pyplot as plt
 from moviepy.editor import VideoFileClip
 
-sobel_kernel = 3
-mag_threshold = (10, 150)
-color_threshold = (100, 200)
-color_channel = 2
+class Line():
+    def __init__(self):
+        # was the line detected in the last iteration?
+        self.detected = False  
+        # x values of the last n fits of the line
+        self.recent_xfitted = [] 
+        #average x values of the fitted line over the last n iterations
+        self.bestx = None     
+        #polynomial coefficients averaged over the last n iterations
+        self.best_fit = None  
+        #polynomial coefficients for the most recent fit
+        self.current_fit = [np.array([False])]  
+        #radius of curvature of the line in some units
+        self.radius_of_curvature = None 
+        #distance in meters of vehicle center from the line
+        self.line_base_pos = None 
+        #difference in fit coefficients between last and new fits
+        self.diffs = np.array([0,0,0], dtype='float') 
+        #x values for detected line pixels
+        self.allx = None  
+        #y values for detected line pixels
+        self.ally = None
+
+left_line = Line()
+right_line = Line()
+
+def region_of_interest(img, vertices):
+	"""
+	Applies an image mask.
+
+	Only keeps the region of the image defined by the polygon
+	formed from `vertices`. The rest of the image is set to black.
+	"""
+	#defining a blank mask to start with
+	mask = np.zeros_like(img)
+
+	#defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+	if len(img.shape) > 2:
+		channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+		ignore_mask_color = (255,) * channel_count
+	else:
+		ignore_mask_color = 255
+
+	#filling pixels inside the polygon defined by "vertices" with the fill color
+	cv2.fillPoly(mask, vertices, ignore_mask_color)
+	#returning the image only where mask pixels are nonzero
+	masked_image = cv2.bitwise_and(img, mask)
+	return masked_image
 
 def undistort_image(img, mtx, dist):
 	dst_img = cv2.undistort(img, mtx, dist, None, mtx)
@@ -63,7 +107,7 @@ def apply_mag_threshold(img, kernel=3, m_threshold=(0,255), axis='x'):
 	scaled_sobel = np.uint8(255*abs_sobel/np.max(abs_sobel))
 
 	sbinary = np.zeros_like(scaled_sobel)
-	sbinary[(scaled_sobel >= m_threshold[0]) & (scaled_sobel <= mag_threshold[1])] = 1
+	sbinary[(scaled_sobel >= m_threshold[0]) & (scaled_sobel <= m_threshold[1])] = 1
 
 	return sbinary
 
@@ -78,55 +122,61 @@ def apply_color_threshold(img, c_threshold=(0,255), c_channel=2):
 	return cbinary
 
 def combined_thresholds(img):
-	s_binary = apply_mag_threshold(img, sobel_kernel, mag_threshold, 'y')
-	c_binary = apply_color_threshold(img, color_threshold, color_channel)
+	s_binary = apply_mag_threshold(img, 3, (10,150), 'y')
+	c_binary = apply_color_threshold(img, (100,200), 2)
 
-	#color_binary = np.dstack((np.zeros_like(s_binary), s_binary, c_binary)) * 255
-	color_binary = np.dstack((np.zeros_like(s_binary), c_binary, s_binary)) * 255
+	color_binary = np.dstack((s_binary, np.zeros_like(s_binary), c_binary)) * 255
 
 	combined_binary = np.zeros_like(s_binary)
 	combined_binary[(s_binary == 1) | (c_binary == 1)] = 1
 
 	return color_binary, combined_binary
 
-def draw_lines(img):
-	cv2.line(img, (1180,0),(1180,720), [255,0,0],4)
-	cv2.line(img, (230,0),(230,720), [255,0,0],4)
-
 def warp_image(img, src_corners, dst_corners):
 
 	M = cv2.getPerspectiveTransform(src_corners, dst_corners)
-	binary_warped = cv2.warpPerspective(img, M, (img.shape[1],img.shape[0]))
+	binary_warped = cv2.warpPerspective(img, M, (1280,720))
 
 	return binary_warped
 
-def region_of_interest(img, vertices):
-    """
-    Applies an image mask.
-    
-    Only keeps the region of the image defined by the polygon
-    formed from `vertices`. The rest of the image is set to black.
-    """
-    #defining a blank mask to start with
-    mask = np.zeros_like(img)   
-    
-    #defining a 3 channel or 1 channel color to fill the mask with depending on the input image
-    if len(img.shape) > 2:
-        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
-        ignore_mask_color = (255,) * channel_count
-    else:
-        ignore_mask_color = 255
-        
-    #filling pixels inside the polygon defined by "vertices" with the fill color    
-    cv2.fillPoly(mask, vertices, ignore_mask_color)
+def detect_next_lane(img):
+	nonzero = img.nonzero()
+	nonzeroy = np.array(nonzero[0])
+	nonzerox = np.array(nonzero[1])
+	margin = 50
 
-    #returning the image only where mask pixels are nonzero
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
+	left_fit = left_line.current_fit
+	right_fit = right_line.current_fit
 
-def detect_lanes(img, margin=100, minpix=50, nwindows=18):
+	left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
+	right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
+	# Again, extract left and right line pixel positions
+	left_line.allx = nonzerox[left_lane_inds]
+	left_line.ally = nonzeroy[left_lane_inds] 
+	right_line.allx = nonzerox[right_lane_inds]
+	right_line.ally = nonzeroy[right_lane_inds]
+	# Fit a second order polynomial to each
+	left_fit = np.polyfit(left_line.ally, left_line.allx, 2)
+	right_fit = np.polyfit(right_line.ally, right_line.allx, 2)
+
+	left_line.current_fit = left_fit
+	right_line.current_fit = right_fit
+
+	# Create an image to draw on and an image to show the selection window
+	out_img = np.dstack((img, img, img))*255
+	# Color in left and right line pixels
+	out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
+	out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+
+	return out_img
+
+def detect_lanes(img):
+	margin = 50
+	minpix = 50
+	nwindows = 18
+
 	histogram = np.sum(img[np.int(img.shape[0]/2):,:], axis=0)
-	#out_img = np.dstack((img, img, img))*255
+	out_img1 = np.dstack((img, img, img))*255
 	midpoint = np.int(histogram.shape[0]/2)
 	leftx_base = np.argmax(histogram[:midpoint])
 	rightx_base = np.argmax(histogram[midpoint:]) + midpoint
@@ -144,7 +194,8 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 	right_lane_inds = []
 
 	# Step through the windows one by one
-	for window in range(nwindows):
+	for win in range(nwindows - 2):
+		window = win + 2
 		# Identify window boundaries in x and y (and right and left)
 		win_y_low = img.shape[0] - (window+1)*window_height
 		win_y_high = img.shape[0] - window*window_height
@@ -154,8 +205,8 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 		win_xright_high = rightx_current + margin
 
 		# Draw the windows on the visualization image
-		#cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-		#cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
+		cv2.rectangle(out_img1,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
+		cv2.rectangle(out_img1,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
 
 		# Identify the nonzero pixels in x and y within the window
 		good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
@@ -175,18 +226,20 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 	left_lane_inds = np.concatenate(left_lane_inds)
 	right_lane_inds = np.concatenate(right_lane_inds)
 	# Extract left and right line pixel positions
-	leftx = nonzerox[left_lane_inds]
-	lefty = nonzeroy[left_lane_inds] 
-	rightx = nonzerox[right_lane_inds]
-	righty = nonzeroy[right_lane_inds] 
-	# Fit a second order polynomial to each
-	left_fit = np.polyfit(lefty, leftx, 2)
-	right_fit = np.polyfit(righty, rightx, 2)
+	left_line.allx = nonzerox[left_lane_inds]
+	left_line.ally = nonzeroy[left_lane_inds]
+	right_line.allx = nonzerox[right_lane_inds]
+	right_line.ally = nonzeroy[right_lane_inds]
 
-	# Generate x and y values for plotting
-	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
-	left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-	right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+	# Fit a second order polynomial to each
+	left_fit = np.polyfit(left_line.ally, left_line.allx, 2)
+	right_fit = np.polyfit(right_line.ally, right_line.allx, 2)
+
+	left_line.diffs = left_line.current_fit[len(left_line.current_fit)-1] - left_fit
+	right_line.diffs = right_line.current_fit[len(right_line.current_fit)-1] - right_fit
+
+	left_line.current_fit = left_fit
+	right_line.current_fit = right_fit
 
 	# Create an image to draw on and an image to show the selection window
 	out_img = np.dstack((img, img, img))*255
@@ -194,32 +247,23 @@ def detect_lanes(img, margin=100, minpix=50, nwindows=18):
 	out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
 	out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
 
-	return out_img, left_fitx, right_fitx, left_lane_inds, right_lane_inds, ploty
+	left_line.detected = True
+	right_line.detected = True
 
-def draw_lanes(img, left_fitx, right_fitx, ploty, margin):
-	# Generate a polygon to illustrate the search window area
-	# And recast the x and y points into usable format for cv2.fillPoly()
-	window_img = np.zeros_like(img)
-	left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
-	left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, ploty])))])
-	left_line_pts = np.hstack((left_line_window1, left_line_window2))
-	right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
-	right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, ploty])))])
-	right_line_pts = np.hstack((right_line_window1, right_line_window2))
-	# Draw the lane onto the warped blank image
-	cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
-	cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
-	result = cv2.addWeighted(img, 1, window_img, 0.3, 0)
-	out_img = np.dstack((np.zeros_like(result), np.zeros_like(result), result))
+	return out_img, out_img1
 
-	return out_img
-
-def draw_lane_mask(orig_img, img, left_fitx, right_fitx, ploty, src_corners, dst_corners):
+def draw_lane_mask(orig_img, img, src_corners, dst_corners):
 	# Create an image to draw the lines on
 	warp_zero = np.zeros_like(img).astype(np.uint8)
 	color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
 
+	left_fit = left_line.current_fit
+	right_fit = right_line.current_fit
+
 	# Recast the x and y points into usable format for cv2.fillPoly()
+	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
+	left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+	right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 	pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
 	pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
 	pts = np.hstack((pts_left, pts_right))
@@ -229,62 +273,115 @@ def draw_lane_mask(orig_img, img, left_fitx, right_fitx, ploty, src_corners, dst
 
 	Minv = cv2.getPerspectiveTransform(dst_corners, src_corners)
 	# Warp the blank back to original image space using inverse perspective matrix (Minv)
-	newwarp = cv2.warpPerspective(color_warp, Minv, (img.shape[1], img.shape[0])) 
+	newwarp = cv2.warpPerspective(color_warp, Minv, (orig_img.shape[1], orig_img.shape[0])) 
 	# Combine the result with the original image
 	result_warped = cv2.addWeighted(orig_img, 1, newwarp, 0.3, 0)
 	return result_warped
 
-def process_image(img):
+def calculate_radius(img):
+	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
+	y_eval = np.max(ploty)
+
+	left_fit = left_line.current_fit
+	right_fit = right_line.current_fit
+
+	left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) / np.absolute(2*left_fit[0])
+	right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) / np.absolute(2*right_fit[0])
+	#print(left_curverad, right_curverad)
+	# Define conversions in x and y from pixels space to meters
+	ym_per_pix = 30/720 # meters per pixel in y dimension
+	xm_per_pix = 3.7/700 # meters per pixel in x dimension
+
+	# Fit new polynomials to x,y in world space
+	left_fit_cr = np.polyfit(left_line.ally*ym_per_pix, left_line.allx*xm_per_pix, 2)
+	right_fit_cr = np.polyfit(right_line.ally*ym_per_pix, right_line.allx*xm_per_pix, 2)
+	# Calculate the new radii of curvature
+	left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
+	right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
+
+	return left_curverad, right_curverad
+
+def process_image(img, save_img=False, img_index=0):
 	#Apply a distortion correction to raw images.
 	undistort_img = undistort_image(img, mtx_l, dist_l)
 	#Use color transforms, gradients, etc., to create a thresholded binary image.
 	color_binary, binary_combined = combined_thresholds(undistort_img)
-
-	#Used only for drawing
-	#dst_img = draw_lines(undistort_img)
+	if save_img == True:
+		cv2.imwrite('output_images/color_binary_output{0}.jpg'.format(idx+1), color_binary)
+		cv2.imwrite('output_images/binary_combined_output{0}.jpg'.format(idx+1), binary_combined)
 
 	#Apply a perspective transform to rectify binary image ("birds-eye view").
-	src_corners = np.float32([[770, 495],[1180, 720],[580,495],[230,720]])
-	dst_corners = np.float32([[1180,0],[1180,720],[230,0],[230,720]])
-	binary_warped = warp_image(binary_combined, src_corners, dst_corners)
-	color_warped = warp_image(undistort_img, src_corners, dst_corners)
-	#draw_lines(color_warped)
-	vertices = np.array([[(230,720),(230,0),(1180,0),(1180,720)]], dtype=np.int32)
-	binary_warped = region_of_interest(binary_warped, vertices)
+	src_corners = np.float32([[800, 470],[1210, 720],[550,470],[200,720]])
+	dst_corners = np.float32([[1260,0],[1260,720],[20,0],[20,720]])
+
+	orig_warped = warp_image(undistort_img, src_corners, dst_corners)
+	out_img1 = cv2.resize(orig_warped, (0,0), fx=0.5, fy=0.5)
+	cv2.putText(out_img1, "Perspective transform", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
+	if save_img == True:
+		cv2.imwrite('output_images/transformed_output{0}.jpg'.format(idx+1), orig_warped)
+
+	#dst_corners = np.float32([[700,0],[700,1280],[20,0],[20,1280]])
+	binary_warped_ro = warp_image(binary_combined, src_corners, dst_corners)
+	color_warped_ro = warp_image(color_binary, src_corners, dst_corners)
+
+	#Remove dashboard
+	vertices = np.array([[(0,640),(0,0),(1280,0),(1280,640)]], dtype=np.int32)
+	binary_warped = region_of_interest(binary_warped_ro, vertices)
+	color_warped = region_of_interest(color_warped_ro, vertices)
 
 	#Used only for drawing
-	#out_img = np.dstack((np.zeros_like(binary_warped), binary_warped, np.zeros_like(binary_warped)))*255
+	out_img2 = cv2.resize(color_warped, (0,0), fx=0.5, fy=0.5)
+	cv2.putText(out_img2, "Threshold combined", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
+	if save_img == True:
+		cv2.imwrite('output_images/binary_warped_output{0}.jpg'.format(idx+1), binary_warped)
+		cv2.imwrite('output_images/color_warped_output{0}.jpg'.format(idx+1), color_warped)
 
-	#Detect lane pixels and fit to find the lane boundary.
-	# Set the width of the windows +/- margin
-	margin = 80
-	# Set minimum number of pixels found to recenter window
-	minpix = 300
-	out_img, left_fitx, right_fitx, left_lane_inds, right_lane_inds, ploty = detect_lanes(binary_warped, margin, minpix)
+	if left_line.detected == False | right_line.detected == False:
+		lane_detected, win_img = detect_lanes(binary_warped)
+		if save_img == True:
+			cv2.imwrite('output_images/lanes_detected_output{0}.jpg'.format(idx+1), lane_detected)
+			cv2.imwrite('output_images/win_img_output{0}.jpg'.format(idx+1), win_img)
 
-	#out_img = draw_lanes(binary_warped, left_fitx, right_fitx, ploty, margin)
+	if left_line.detected == True & right_line.detected == True:
+		lane_detected = detect_next_lane(binary_warped)
 
-	out_img = draw_lane_mask(undistort_img, binary_warped, left_fitx, right_fitx, ploty, src_corners, dst_corners)
+	out_img3 = cv2.resize(lane_detected, (0,0), fx=0.5, fy=0.5)
+	cv2.putText(out_img3, "Lanes detected", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
 
-	#return out_img
-	return color_warped
+	leftrad, rightrad = calculate_radius(binary_warped)
+
+	result = draw_lane_mask(undistort_img, binary_warped, src_corners, dst_corners)
+	cv2.putText(result, "Left radius {0}m, Right radius {1}m".format(np.int(leftrad), np.int(rightrad)), (100,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0))
+	out_img4 = cv2.resize(result, (0,0), fx=0.5, fy=0.5)
+
+	if save_img == True:
+		cv2.imwrite('output_images/final_output{0}.jpg'.format(idx+1), result)
+
+	iresult1 = np.hstack((out_img1, out_img2))
+	iresult2 = np.hstack((out_img3, out_img4))
+	final = np.vstack((iresult1, iresult2))
+
+	return final
 
 #Compute the camera calibration matrix and distortion coefficients given a set of chessboard images.
 mtx_l, dist_l = calibrate_camera()
 
 test_images = glob.glob('test_images/test*.jpg')
 test_images.sort()
-
 for idx, fname in enumerate(test_images):
 	img = cv2.imread(fname)
-	result = process_image(img)
+	result = process_image(img, True, idx)
+	left_line.detected = False
+	left_line.allx = None
+	left_line.ally = None
+	left_line.current_fit = [np.array([False])]
+	right_line.detected = False
+	right_line.allx = None
+	right_line.ally = None
+	right_line.current_fit = [np.array([False])]
 
-#Determine the curvature of the lane and vehicle position with respect to center.
-#Warp the detected lane boundaries back onto the original image.
-#Output visual display of the lane boundaries and numerical estimation of lane curvature and vehicle position.
-#	cv2.imwrite('output_images/final_output{0}.jpg'.format(idx+1), out_img)
 
-challenge_output = 'project_output.mp4'
-clip1 = VideoFileClip("project_video.mp4")
-challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-challenge_clip.write_videofile(challenge_output, audio=False)
+#challenge_output = 'project_output.mp4'
+#clip1 = VideoFileClip("project_video.mp4")
+#challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+#challenge_clip.write_videofile(challenge_output, audio=False)
