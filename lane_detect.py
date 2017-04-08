@@ -14,8 +14,6 @@ class Line():
         self.current_fit = [np.array([False])]  
         #radius of curvature of the line in some units
         self.radius_of_curvature = None 
-        #distance in meters of vehicle center from the line
-        self.line_base_pos = None 
         #difference in fit coefficients between last and new fits
         self.diffs = np.array([0,0,0], dtype='float') 
         #x values for detected line pixels
@@ -27,8 +25,12 @@ left_line = Line()
 right_line = Line()
 
 def draw_line(img):
-	cv2.line(img, (800,470),(1210,720), [255,0,0],4)
+	cv2.line(img, (760,470),(1180,720), [255,0,0],4)
 	cv2.line(img, (550,470),(180,720), [255,0,0],4)
+
+def draw_poly(img):
+	points = np.array([[730, 470],[1150, 720],[180,720],[550,470]])
+	cv2.polylines(img, np.int32([points]), 1, [255,0,0])
 
 def region_of_interest(img, vertices):
 	"""
@@ -93,6 +95,14 @@ def calibrate_camera():
 	dst = cv2.undistort(test_img, mtx, dist, None, mtx)
 	cv2.imwrite('output_images/undistort_output.jpg', dst)
 
+	f, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 9))
+	f.tight_layout()
+	ax1.imshow(test_img)
+	ax1.set_title('Original Image', fontsize=50)
+	ax2.imshow(dst)
+	ax2.set_title('Undistorted Image', fontsize=50)
+	f.savefig('output_images/undistort_image.png')
+
 	return mtx, dist
 
 def apply_color_mask(img):
@@ -111,8 +121,7 @@ def apply_color_mask(img):
 	return out_img
 
 def apply_mag_threshold(img, kernel=3, m_threshold=(0,255), axis='x'):
-	#gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-	gray = img
+	gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
 	if axis == 'x':
 		sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=kernel) #Take derivative in x
@@ -137,15 +146,27 @@ def apply_color_threshold(img, c_threshold=(0,255), c_channel=2):
 
 	return cbinary
 
-def combined_thresholds(img, masked_img):
-	s_binary = apply_mag_threshold(masked_img, 3, (10,150), 'y')
+def combined_thresholds(img, masked_img, idx, save_img=False):
+	s_binary = apply_mag_threshold(img, 3, (10,150), 'x')
 	c_binary = apply_color_threshold(img, (100,200), 2)
 
 	color_binary = np.dstack((s_binary, np.zeros_like(s_binary), c_binary)) * 255
 
 	combined_binary = np.zeros_like(s_binary)
-	combined_binary[(s_binary == 1) | (s_binary == 1)] = 1
+	combined_binary[(masked_img == 255) | (s_binary == 1)] = 1
 
+	if save_img == True:
+		f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(24, 9))
+		f.tight_layout()
+		ax1.imshow(masked_img)
+		ax1.set_title('Color masked', fontsize=50)
+		ax2.imshow(s_binary)
+		ax2.set_title('Mag threshold', fontsize=50)
+		ax3.imshow(c_binary)
+		ax3.set_title('Color threshold', fontsize=50)
+		ax4.imshow(combined_binary)
+		ax4.set_title('Combined threshold', fontsize=50)
+		f.savefig('output_images/thresholded_output{0}.png'.format(idx+1))
 	return color_binary, combined_binary
 
 def warp_image(img, src_corners, dst_corners):
@@ -365,33 +386,52 @@ def calculate_radius(img):
 
 	return left_curverad, right_curverad
 
-def process_image(img, save_img=False, img_index=0):
+def calculate_distance(img):
+	xm_per_pix = 3.7/700
+	left_fit = left_line.best_fit
+	right_fit = right_line.best_fit
+
+	# Recast the x and y points into usable format for cv2.fillPoly()
+	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
+	left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+	right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+	left_lane_pos = left_fitx[len(left_fitx)-1]
+	right_lane_pos = right_fitx[len(right_fitx)-1]
+	distance = (((left_lane_pos + right_lane_pos) / 2) - 640) * xm_per_pix
+
+	return distance
+
+def process_image(img, save_img=False, idx=0):
 	#Apply a distortion correction to raw images.
 	undistort_img = undistort_image(img, mtx_l, dist_l)
 	if save_img == True:
 		cv2.imwrite('output_images/undistort_output{0}.jpg'.format(idx+1), undistort_img)
-
-	draw_line(undistort_img)
 
 	#Use color transforms, gradients, etc., to create a thresholded binary image.
 	masked_img = apply_color_mask(undistort_img)
 	if save_img == True:
 		cv2.imwrite('output_images/masked_output{0}.jpg'.format(idx+1), masked_img)
 
-	color_binary, binary_combined = combined_thresholds(undistort_img, masked_img)
-	if save_img == True:
-		cv2.imwrite('output_images/color_binary_output{0}.jpg'.format(idx+1), color_binary)
-		cv2.imwrite('output_images/binary_combined_output{0}.jpg'.format(idx+1), binary_combined)
+	color_binary, binary_combined = combined_thresholds(undistort_img, masked_img, idx, save_img)
 
+	img_size = img.shape
 	#Apply a perspective transform to rectify binary image ("birds-eye view").
-	src_corners = np.float32([[800, 470],[1210, 720],[550,470],[180,720]])
+	src_corners = np.float32([[760, 470],[1180, 720],[550,470],[180,720]])
 	dst_corners = np.float32([[1260,0],[1260,720],[40,0],[40,720]])
+
+	draw_poly(undistort_img)
 
 	orig_warped = warp_image(undistort_img, src_corners, dst_corners)
 	out_img1 = cv2.resize(orig_warped, (0,0), fx=0.5, fy=0.5)
 	cv2.putText(out_img1, "Perspective transform", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
 	if save_img == True:
-		cv2.imwrite('output_images/transformed_output{0}.jpg'.format(idx+1), orig_warped)
+		f, (ax1, ax2) = plt.subplots(1, 2, figsize=(24, 9))
+		f.tight_layout()
+		ax1.imshow(undistort_img)
+		ax1.set_title('Original Image', fontsize=50)
+		ax2.imshow(orig_warped)
+		ax2.set_title('Transformed Image', fontsize=50)
+		f.savefig('output_images/transformed_output{0}.png'.format(idx+1))
 
 	binary_warped_ro = warp_image(binary_combined, src_corners, dst_corners)
 	color_warped_ro = warp_image(color_binary, src_corners, dst_corners)
@@ -405,6 +445,7 @@ def process_image(img, save_img=False, img_index=0):
 	out_img2 = cv2.resize(color_warped, (0,0), fx=0.5, fy=0.5)
 	cv2.putText(out_img2, "Threshold combined", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
 	if save_img == True:
+		temp = np.dstack((np.zeros_like(binary_warped), binary_warped, np.zeros_like(binary_warped))) * 255
 		cv2.imwrite('output_images/binary_warped_output{0}.jpg'.format(idx+1), binary_warped)
 		cv2.imwrite('output_images/color_warped_output{0}.jpg'.format(idx+1), color_warped)
 
@@ -421,9 +462,12 @@ def process_image(img, save_img=False, img_index=0):
 	cv2.putText(out_img3, "Lanes detected", (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255))
 
 	leftrad, rightrad = calculate_radius(binary_warped)
+	distance = calculate_distance(binary_warped)
 
 	result = draw_lane_mask(undistort_img, binary_warped, src_corners, dst_corners)
-	cv2.putText(result, "Left radius {0}m, Right radius {1}m".format(np.int(leftrad), np.int(rightrad)), (100,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0))
+
+	cv2.putText(result, "Curvature {0:.2f}m Offset: {0:.2f}m".format((leftrad + rightrad)/2, distance), , (100,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 2)
+
 	out_img4 = cv2.resize(result, (0,0), fx=0.5, fy=0.5)
 
 	if save_img == True:
@@ -435,23 +479,35 @@ def process_image(img, save_img=False, img_index=0):
 
 	return final
 
-#Compute the camera calibration matrix and distortion coefficients given a set of chessboard images.
-mtx_l, dist_l = calibrate_camera()
-
-test_images = glob.glob('test_images/test*.jpg')
-test_images.sort()
-for idx, fname in enumerate(test_images):
+def process_test_image(fname, idx):
 	img = cv2.imread(fname)
 	result = process_image(img, True, idx)
 	left_line.detected = False
 	left_line.allx = None
 	left_line.ally = None
 	left_line.current_fit = [np.array([False])]
+	left_line.best_fit = None
 	right_line.detected = False
 	right_line.allx = None
 	right_line.ally = None
 	right_line.current_fit = [np.array([False])]
+	right_line.best_fit = None
 
+#Compute the camera calibration matrix and distortion coefficients given a set of chessboard images.
+mtx_l, dist_l = calibrate_camera()
+
+straight_images = glob.glob('test_images/straight_lines*.jpg')
+straight_images.sort()
+test_images = glob.glob('test_images/test*.jpg')
+test_images.sort()
+
+for idx, fname in enumerate(straight_images):
+	print(fname)
+	process_test_image(fname, idx)
+
+for idx, fname in enumerate(test_images):
+	print(fname)
+	process_test_image(fname, idx + 2)
 
 challenge_output = 'project_output.mp4'
 clip1 = VideoFileClip("project_video.mp4")
