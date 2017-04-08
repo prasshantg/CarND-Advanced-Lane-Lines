@@ -23,8 +23,8 @@ The goals / steps of this project are the following:
 [image3]: ./output_images/thresholded_output1.png "Binary Example"
 [image4]: ./output_images/transformed_output1.png "Warped Example"
 [image5]: ./output_images/win_img_output1.jpg "Window search example"
-[image5]: ./output_images/lanes_detected_output1.jpg "Fit Visual"
-[image6]: ./output_images/final_output1.jpg "Output"
+[image6]: ./output_images/lanes_detected_output1.jpg "Fit Visual"
+[image7]: ./output_images/final_output1.jpg "Output"
 [video1]: ./project_output.mp4 "Video"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
