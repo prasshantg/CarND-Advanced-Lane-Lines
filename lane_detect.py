@@ -95,8 +95,28 @@ def calibrate_camera():
 
 	return mtx, dist
 
+def apply_color_mask(img):
+	img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+	print(img_gray.shape)
+	# Convert BGR to HSV
+	img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+	# Extract yellow color lanes
+	threshold_min = np.array([20, 80, 80], np.uint8)
+	threshold_max = np.array([105, 255, 255], np.uint8)
+	img_threshold = cv2.inRange(img_hsv, threshold_min, threshold_max);
+	# Convert image to binary to highlight white lanes and avoid gray patches on road
+	th, out_img = cv2.threshold(img_gray, 200, 255, cv2.THRESH_BINARY_INV);
+	out_img = cv2.bitwise_not(out_img)
+	print(out_img.shape)
+	print(img_threshold.shape)
+	# Merge yellow extracted and binary image
+	out_img = cv2.bitwise_or(out_img, img_threshold)
+	return out_img
+
 def apply_mag_threshold(img, kernel=3, m_threshold=(0,255), axis='x'):
-	gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+	#gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+	gray = img
+	print(img.shape)
 
 	if axis == 'x':
 		sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=kernel) #Take derivative in x
@@ -121,9 +141,9 @@ def apply_color_threshold(img, c_threshold=(0,255), c_channel=2):
 
 	return cbinary
 
-def combined_thresholds(img):
-	s_binary = apply_mag_threshold(img, 3, (10,150), 'y')
-	c_binary = apply_color_threshold(img, (100,200), 2)
+def combined_thresholds(img, masked_img):
+	s_binary = apply_mag_threshold(masked_img, 3, (20,100), 'y')
+	c_binary = apply_color_threshold(img, (170,255), 2)
 
 	color_binary = np.dstack((s_binary, np.zeros_like(s_binary), c_binary)) * 255
 
@@ -143,7 +163,7 @@ def detect_next_lane(img):
 	nonzero = img.nonzero()
 	nonzeroy = np.array(nonzero[0])
 	nonzerox = np.array(nonzero[1])
-	margin = 50
+	margin = 100
 
 	left_fit = left_line.current_fit
 	right_fit = right_line.current_fit
@@ -171,7 +191,7 @@ def detect_next_lane(img):
 	return out_img
 
 def detect_lanes(img):
-	margin = 50
+	margin = 100
 	minpix = 50
 	nwindows = 18
 
@@ -305,7 +325,11 @@ def process_image(img, save_img=False, img_index=0):
 	#Apply a distortion correction to raw images.
 	undistort_img = undistort_image(img, mtx_l, dist_l)
 	#Use color transforms, gradients, etc., to create a thresholded binary image.
-	color_binary, binary_combined = combined_thresholds(undistort_img)
+	masked_img = apply_color_mask(undistort_img)
+	if save_img == True:
+		cv2.imwrite('output_images/masked_output{0}.jpg'.format(idx+1), masked_img)
+
+	color_binary, binary_combined = combined_thresholds(undistort_img, masked_img)
 	if save_img == True:
 		cv2.imwrite('output_images/color_binary_output{0}.jpg'.format(idx+1), color_binary)
 		cv2.imwrite('output_images/binary_combined_output{0}.jpg'.format(idx+1), binary_combined)
