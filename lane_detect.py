@@ -453,7 +453,7 @@ for idx, fname in enumerate(test_images):
 	right_line.current_fit = [np.array([False])]
 
 
-#challenge_output = 'challenge_output.mp4'
-#clip1 = VideoFileClip("challenge_video.mp4")
-#challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-#challenge_clip.write_videofile(challenge_output, audio=False)
+challenge_output = 'project_output.mp4'
+clip1 = VideoFileClip("project_video.mp4")
+challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+challenge_clip.write_videofile(challenge_output, audio=False)
