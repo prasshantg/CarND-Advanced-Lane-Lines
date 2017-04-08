@@ -466,7 +466,7 @@ def process_image(img, save_img=False, idx=0):
 
 	result = draw_lane_mask(undistort_img, binary_warped, src_corners, dst_corners)
 
-	cv2.putText(result, "Curvature {0:.2f}m Offset: {0:.2f}m".format((leftrad + rightrad)/2, distance), , (100,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 2)
+	cv2.putText(result, "Curvature {0:.2f}m Offset: {0:.2f}m".format((leftrad + rightrad)/2, distance), (100,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 2)
 
 	out_img4 = cv2.resize(result, (0,0), fx=0.5, fy=0.5)
 
