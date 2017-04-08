@@ -8,10 +8,6 @@ class Line():
     def __init__(self):
         # was the line detected in the last iteration?
         self.detected = False  
-        # x values of the last n fits of the line
-        self.recent_xfitted = [] 
-        #average x values of the fitted line over the last n iterations
-        self.bestx = None     
         #polynomial coefficients averaged over the last n iterations
         self.best_fit = None  
         #polynomial coefficients for the most recent fit
@@ -29,6 +25,10 @@ class Line():
 
 left_line = Line()
 right_line = Line()
+
+def draw_line(img):
+	cv2.line(img, (800,470),(1210,720), [255,0,0],4)
+	cv2.line(img, (550,470),(180,720), [255,0,0],4)
 
 def region_of_interest(img, vertices):
 	"""
@@ -155,37 +155,6 @@ def warp_image(img, src_corners, dst_corners):
 
 	return binary_warped
 
-def detect_next_lane(img):
-	nonzero = img.nonzero()
-	nonzeroy = np.array(nonzero[0])
-	nonzerox = np.array(nonzero[1])
-	margin = 100
-
-	left_fit = left_line.current_fit
-	right_fit = right_line.current_fit
-
-	left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
-	right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
-	# Again, extract left and right line pixel positions
-	left_line.allx = nonzerox[left_lane_inds]
-	left_line.ally = nonzeroy[left_lane_inds] 
-	right_line.allx = nonzerox[right_lane_inds]
-	right_line.ally = nonzeroy[right_lane_inds]
-	# Fit a second order polynomial to each
-	left_fit = np.polyfit(left_line.ally, left_line.allx, 2)
-	right_fit = np.polyfit(right_line.ally, right_line.allx, 2)
-
-	left_line.current_fit = left_fit
-	right_line.current_fit = right_fit
-
-	# Create an image to draw on and an image to show the selection window
-	out_img = np.dstack((img, img, img))*255
-	# Color in left and right line pixels
-	out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-	out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-
-	return out_img
-
 def detect_lanes(img):
 	h_margin = 80
 	margin = 80
@@ -261,6 +230,14 @@ def detect_lanes(img):
 	right_line.allx = nonzerox[right_lane_inds]
 	right_line.ally = nonzeroy[right_lane_inds]
 
+	if (left_line.allx.size == 0 | left_line.ally.size == 0):
+		out_img = np.dstack((img, img, img))*255
+		return out_img, out_img1
+
+	if (right_line.allx.size == 0 | right_line.ally.size == 0):
+		out_img = np.dstack((img, img, img))*255
+		return out_img, out_img1
+
 	# Fit a second order polynomial to each
 	left_fit = np.polyfit(left_line.ally, left_line.allx, 2)
 	right_fit = np.polyfit(right_line.ally, right_line.allx, 2)
@@ -268,6 +245,8 @@ def detect_lanes(img):
 	left_line.diffs = left_line.current_fit[len(left_line.current_fit)-1] - left_fit
 	right_line.diffs = right_line.current_fit[len(right_line.current_fit)-1] - right_fit
 
+	left_line.best_fit = (left_line.current_fit + left_fit)/2
+	right_line.best_fit = (right_line.current_fit + right_fit)/2
 	left_line.current_fit = left_fit
 	right_line.current_fit = right_fit
 
@@ -282,13 +261,59 @@ def detect_lanes(img):
 
 	return out_img, out_img1
 
+def detect_next_lane(img):
+	nonzero = img.nonzero()
+	nonzeroy = np.array(nonzero[0])
+	nonzerox = np.array(nonzero[1])
+	margin = 100
+
+	left_fit = left_line.current_fit
+	right_fit = right_line.current_fit
+
+	left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
+	right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))
+	# Again, extract left and right line pixel positions
+	left_line.allx = nonzerox[left_lane_inds]
+	left_line.ally = nonzeroy[left_lane_inds] 
+	right_line.allx = nonzerox[right_lane_inds]
+	right_line.ally = nonzeroy[right_lane_inds]
+
+	if (left_line.allx.size == 0 | left_line.ally.size == 0):
+		out_img, temp = detect_lanes(img)
+		return out_img
+
+	if (right_line.allx.size == 0 | right_line.ally.size == 0):
+		out_img, temp = detect_lanes(img)
+		return out_img
+
+	# Fit a second order polynomial to each
+	left_fit = np.polyfit(left_line.ally, left_line.allx, 2)
+	right_fit = np.polyfit(right_line.ally, right_line.allx, 2)
+
+	left_line.best_fit = (left_line.current_fit + left_fit)/2
+	right_line.best_fit = (right_line.current_fit + right_fit)/2
+	left_line.current_fit = left_fit
+	right_line.current_fit = right_fit
+
+	if len(left_fit) < 1 | len(right_fit) < 1:
+		out_img, temp = detect_lanes(img)
+		return out_img
+
+	# Create an image to draw on and an image to show the selection window
+	out_img = np.dstack((img, img, img))*255
+	# Color in left and right line pixels
+	out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
+	out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+
+	return out_img
+
 def draw_lane_mask(orig_img, img, src_corners, dst_corners):
 	# Create an image to draw the lines on
 	warp_zero = np.zeros_like(img).astype(np.uint8)
 	color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
 
-	left_fit = left_line.current_fit
-	right_fit = right_line.current_fit
+	left_fit = left_line.best_fit
+	right_fit = right_line.best_fit
 
 	# Recast the x and y points into usable format for cv2.fillPoly()
 	ploty = np.linspace(0, img.shape[0]-1, img.shape[0] )
@@ -322,6 +347,12 @@ def calculate_radius(img):
 	ym_per_pix = 30/720 # meters per pixel in y dimension
 	xm_per_pix = 3.7/700 # meters per pixel in x dimension
 
+	if (left_line.allx.size == 0 | left_line.ally.size == 0):
+		return left_line.radius_of_curvature, right_line.radius_of_curvature
+
+	if (right_line.allx.size == 0 | right_line.ally.size == 0):
+		return left_line.radius_of_curvature, right_line.radius_of_curvature
+
 	# Fit new polynomials to x,y in world space
 	left_fit_cr = np.polyfit(left_line.ally*ym_per_pix, left_line.allx*xm_per_pix, 2)
 	right_fit_cr = np.polyfit(right_line.ally*ym_per_pix, right_line.allx*xm_per_pix, 2)
@@ -329,11 +360,19 @@ def calculate_radius(img):
 	left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
 	right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
 
+	left_line.radius_of_curvature = left_curverad
+	right_line.radius_of_curvature = right_curverad
+
 	return left_curverad, right_curverad
 
 def process_image(img, save_img=False, img_index=0):
 	#Apply a distortion correction to raw images.
 	undistort_img = undistort_image(img, mtx_l, dist_l)
+	if save_img == True:
+		cv2.imwrite('output_images/undistort_output{0}.jpg'.format(idx+1), undistort_img)
+
+	draw_line(undistort_img)
+
 	#Use color transforms, gradients, etc., to create a thresholded binary image.
 	masked_img = apply_color_mask(undistort_img)
 	if save_img == True:
@@ -354,7 +393,6 @@ def process_image(img, save_img=False, img_index=0):
 	if save_img == True:
 		cv2.imwrite('output_images/transformed_output{0}.jpg'.format(idx+1), orig_warped)
 
-	#dst_corners = np.float32([[700,0],[700,1280],[20,0],[20,1280]])
 	binary_warped_ro = warp_image(binary_combined, src_corners, dst_corners)
 	color_warped_ro = warp_image(color_binary, src_corners, dst_corners)
 
@@ -415,7 +453,7 @@ for idx, fname in enumerate(test_images):
 	right_line.current_fit = [np.array([False])]
 
 
-challenge_output = 'project_output.mp4'
-clip1 = VideoFileClip("project_video.mp4")
-challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-challenge_clip.write_videofile(challenge_output, audio=False)
+#challenge_output = 'challenge_output.mp4'
+#clip1 = VideoFileClip("challenge_video.mp4")
+#challenge_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+#challenge_clip.write_videofile(challenge_output, audio=False)
